@@ -1,0 +1,44 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Finance Mini App</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>Group Finance</h1>
+      <p id="chatInfo">Loading Telegram context...</p>
+    </header>
+
+    <section class="card">
+      <h2>Create Hangout</h2>
+      <form id="hangoutForm">
+        <label>Name <input id="hangoutName" required /></label>
+        <label>Date <input id="hangoutDate" type="date" required /></label>
+        <button type="submit">Create</button>
+      </form>
+      <p id="hangoutMsg"></p>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <h2>Hangouts</h2>
+        <button id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <ul id="hangoutsList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Summary</h2>
+      <button id="summaryBtn" type="button">Load Summary</button>
+      <pre id="summaryBox"></pre>
+    </section>
+  </main>
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
