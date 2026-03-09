@@ -4,17 +4,18 @@ This folder contains a migration scaffold from bot-chat UX to Telegram Mini App 
 
 ## Structure
 
-- `backend/main.py`: FastAPI API using the existing `finances.db`
-- `frontend/`: Mini App UI (`index.html`, `app.js`, `styles.css`)
+- `backend/server.js`: Node.js (Express) API using the existing `finances.db`
+- `frontend/`: legacy static Mini App UI (`index.html`, `app.js`, `styles.css`)
+- `frontend-tele/`: React + Vite Mini App UI (current UI)
 - `bot/launcher.py`: Bot launcher (`/start`, `/app`) that opens Mini App
 - `.env.example`: environment variables template
 
 ## 1) Backend
 
 ```powershell
-cd miniapp\backend
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cd finance-miniapp\backend
+npm install
+npm run dev
 ```
 
 Health check:
@@ -23,18 +24,34 @@ Health check:
 curl http://localhost:8000/health
 ```
 
-## 2) Frontend
-
-Serve `miniapp/frontend` with any static server (must be HTTPS in Telegram production):
+## 2) Frontend (React UI: `frontend-tele`)
 
 ```powershell
-cd miniapp\frontend
-python -m http.server 3000
+cd finance-miniapp\frontend-tele
+npm install
+npm run dev
 ```
 
 Local test URL example:
 
-`http://localhost:3000/index.html?api=http://localhost:8000/api&chat_id=<your_chat_id>`
+`http://localhost:5173/?api=http://localhost:8000/api&chat_id=<your_chat_id>&user_name=<your_name>`
+
+Build:
+
+```powershell
+npm run build
+```
+
+## 2b) Frontend (legacy static `frontend`)
+
+Serve `finance-miniapp/frontend` with any static server:
+
+```powershell
+cd finance-miniapp\frontend
+python -m http.server 3000
+```
+
+Local test URL example: `http://localhost:3000/index.html?api=http://localhost:8000/api&chat_id=<your_chat_id>`
 
 Frontend API config options:
 
@@ -49,7 +66,7 @@ Frontend API config options:
 ## 3) Mini App Bot Launcher
 
 ```powershell
-cd miniapp
+cd finance-miniapp
 copy .env.example .env
 # edit .env: BOT_TOKEN, MINIAPP_URL
 cd bot
@@ -89,7 +106,7 @@ If repo already exists locally, skip `git init` and `remote add`.
 GitHub will provide:
 `https://<your-username>.github.io/<your-repo>/`
 
-### C) Publish `miniapp/frontend`
+### C) Publish `finance-miniapp/frontend`
 
 Option 1 (recommended simple):
 - create a separate repo for frontend and keep `index.html`, `app.js`, `styles.css`, `config.js` at root.
@@ -99,7 +116,7 @@ Option 2 (same repo):
 
 ### D) Set Mini App URL
 
-In `miniapp/.env`:
+In `finance-miniapp/.env`:
 
 `MINIAPP_URL=https://<your-username>.github.io/<your-repo>/index.html`
 
@@ -121,9 +138,13 @@ Or pass query param:
 
 - `GET /api/hangouts?chat_id=...`
 - `POST /api/hangouts`
+- `GET /api/hangouts/{id}/detail?chat_id=...`
+- `GET /api/hangouts/{id}/people?chat_id=...`
 - `GET /api/hangouts/{id}/expenses?chat_id=...`
 - `POST /api/hangouts/{id}/expenses?chat_id=...`
 - `POST /api/hangouts/{id}/settlements?chat_id=...`
+- `DELETE /api/expenses/{id}?chat_id=...`
+- `DELETE /api/hangouts/{id}?chat_id=...`
 - `GET /api/summary?chat_id=...`
 
 ## Migration notes
