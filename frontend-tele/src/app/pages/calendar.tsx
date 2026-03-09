@@ -87,7 +87,7 @@ export function CalendarPage() {
                   <span className={`text-sm text-center ${isToday ? '' : ''}`}>
                     {format(day, 'd')}
                   </span>
-                  <div className="flex-1 flex flex-col gap-1 mt-1">
+                  <div className="flex-1 flex flex-col items-center justify-start gap-1 mt-1">
                     {dayEvents.slice(0, 2).map((event) => {
                       const status = getEventStatus(event.id);
                       let gradientClass = 'bg-gradient-to-r from-primary to-secondary';
@@ -102,7 +102,7 @@ export function CalendarPage() {
                         <Link
                           key={event.id}
                           to={`/events/${event.id}`}
-                          className={`w-2/3 h-1 rounded-full ${gradientClass}`}
+                          className={`w-4 h-1 rounded-full ${gradientClass}`}
                           title={event.name}
                         />
                       );

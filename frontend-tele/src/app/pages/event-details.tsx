@@ -62,7 +62,10 @@ export function EventDetailsPage() {
 
   const handleAddParticipant = async () => {
     if (newParticipantName.trim()) {
-      await addParticipant(event.id, newParticipantName.trim());
+      const addedName = newParticipantName.trim();
+      const addedId = addedName.toLowerCase().replace(/\s+/g, '-');
+      setSelectedParticipants((prev) => (prev.includes(addedId) ? prev : [...prev, addedId]));
+      await addParticipant(event.id, addedName);
       setNewParticipantName('');
       setShowAddParticipant(false);
     }

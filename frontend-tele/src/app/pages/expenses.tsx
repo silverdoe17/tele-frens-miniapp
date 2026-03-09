@@ -1,6 +1,6 @@
-﻿import { useState } from 'react';
+﻿import { useRef, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router';
-import { ArrowLeft, Plus, Handshake } from 'lucide-react';
+import { ArrowLeft, Plus, Handshake, Trash2 } from 'lucide-react';
 import { useApp } from '../context/app-context';
 import {
   Dialog,
@@ -31,6 +31,8 @@ export function ExpensesPage() {
   const [showSettleDialog, setShowSettleDialog] = useState(false);
   const [selectedExpenses, setSelectedExpenses] = useState<string[]>([]);
   const [deleteExpenseId, setDeleteExpenseId] = useState<string | null>(null);
+  const [swipedExpenseId, setSwipedExpenseId] = useState<string | null>(null);
+  const touchStartX = useRef<number>(0);
 
   if (!event) {
     return <div className="p-4">Hangout not found</div>;
@@ -40,6 +42,23 @@ export function ExpensesPage() {
     if (deleteExpenseId) {
       await deleteExpense(deleteExpenseId);
       setDeleteExpenseId(null);
+      setSwipedExpenseId(null);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, expenseId: string) => {
+    touchStartX.current = e.touches[0].clientX;
+    if (swipedExpenseId && swipedExpenseId !== expenseId) {
+      setSwipedExpenseId(null);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent, expenseId: string) => {
+    const diff = touchStartX.current - e.touches[0].clientX;
+    if (diff > 45) {
+      setSwipedExpenseId(expenseId);
+    } else if (diff < -20) {
+      setSwipedExpenseId(null);
     }
   };
 
@@ -116,35 +135,53 @@ export function ExpensesPage() {
           ) : (
             eventExpenses.map((expense) => {
               const payer = participants.find((p) => p.id === expense.paidBy);
+              const isSwiped = swipedExpenseId === expense.id;
+
               return (
-                <div
-                  key={expense.id}
-                  className={`bg-card rounded-2xl p-4 border ${
-                    expense.settled ? 'border-success/20 bg-success/5' : 'border-border'
-                  }`}
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <h4>{expense.description}</h4>
-                      <p className="text-sm text-muted-foreground">Paid by {payer?.name}</p>
+                <div key={expense.id} className="relative overflow-hidden rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteExpenseId(expense.id)}
+                    className="absolute right-0 top-0 h-full w-20 bg-destructive text-destructive-foreground flex items-center justify-center"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+
+                  <div
+                    onTouchStart={(e) => handleTouchStart(e, expense.id)}
+                    onTouchMove={(e) => handleTouchMove(e, expense.id)}
+                    onClick={() => {
+                      if (isSwiped) {
+                        setSwipedExpenseId(null);
+                      }
+                    }}
+                    className={`bg-card rounded-2xl p-4 border transition-transform duration-200 ${
+                      expense.settled ? 'border-success/20 bg-success/5' : 'border-border'
+                    } ${isSwiped ? '-translate-x-20' : 'translate-x-0'}`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h4>{expense.description}</h4>
+                        <p className="text-sm text-muted-foreground">Paid by {payer?.name}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg">${expense.amount.toFixed(2)}</p>
+                        {expense.settled && <span className="text-xs text-success">Settled</span>}
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-lg">${expense.amount.toFixed(2)}</p>
-                      {expense.settled && <span className="text-xs text-success">Settled</span>}
+                    <div className="flex gap-1 mt-2">
+                      {expense.splitBetween.map((pId) => {
+                        const p = participants.find((participant) => participant.id === pId);
+                        return (
+                          <div
+                            key={pId}
+                            className="w-6 h-6 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white text-xs"
+                          >
+                            {p?.name[0]}
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                  <div className="flex gap-1 mt-2">
-                    {expense.splitBetween.map((pId) => {
-                      const p = participants.find((participant) => participant.id === pId);
-                      return (
-                        <div
-                          key={pId}
-                          className="w-6 h-6 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white text-xs"
-                        >
-                          {p?.name[0]}
-                        </div>
-                      );
-                    })}
                   </div>
                 </div>
               );
@@ -264,4 +301,3 @@ export function ExpensesPage() {
     </div>
   );
 }
-

@@ -1,4 +1,5 @@
 ﻿const path = require("path");
+const fs = require("fs");
 const express = require("express");
 const cors = require("cors");
 const Database = require("better-sqlite3");
@@ -9,6 +10,7 @@ app.use(express.json());
 
 const DB_FILE = path.resolve(__dirname, "..", "..", "finances.db");
 const db = new Database(DB_FILE);
+const FRONTEND_DIST = path.resolve(__dirname, "..", "frontend-tele", "dist");
 
 function initDb() {
   db.exec(`
@@ -514,8 +516,17 @@ app.get("/api/me", (req, res) => {
   res.json({ chat_id: chatId, user_id: userId, validated: false });
 });
 
+if (fs.existsSync(FRONTEND_DIST)) {
+  app.use("/miniapp", express.static(FRONTEND_DIST));
+  app.get("/miniapp/*", (_req, res) => {
+    res.sendFile(path.join(FRONTEND_DIST, "index.html"));
+  });
+}
+
 initDb();
 const PORT = Number(process.env.PORT || 8000);
 app.listen(PORT, () => {
   console.log(`Node backend running on :${PORT}`);
 });
+
+

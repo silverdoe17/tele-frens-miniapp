@@ -24,6 +24,10 @@ Health check:
 curl http://localhost:8000/health
 ```
 
+Serve built Mini App from backend at:
+
+`http://localhost:8000/miniapp`
+
 ## 2) Frontend (React UI: `frontend-tele`)
 
 ```powershell
@@ -41,6 +45,8 @@ Build:
 ```powershell
 npm run build
 ```
+
+After building, backend serves this build at `/miniapp`.
 
 ## 2b) Frontend (legacy static `frontend`)
 
@@ -75,6 +81,33 @@ python launcher.py
 ```
 
 Use `/start` or `/app` in Telegram to open Mini App.
+
+## HTTPS for Telegram testing (no domain needed)
+
+Telegram Mini Apps require a public `https://` URL. Fastest local test is a tunnel:
+
+1. Build frontend:
+```powershell
+cd finance-miniapp\frontend-tele
+npm run build
+```
+2. Start backend:
+```powershell
+cd ..\backend
+npm run dev
+```
+3. Create HTTPS tunnel to backend (example with Cloudflare Tunnel):
+```powershell
+cloudflared tunnel --url http://localhost:8000
+```
+4. Copy the generated `https://...trycloudflare.com` URL.
+5. Set `MINIAPP_URL` in `finance-miniapp/.env` to:
+`https://<your-tunnel-domain>/miniapp`
+6. Start bot launcher and test `/start` in Telegram.
+
+Notes:
+- With this setup, frontend and backend are same origin over HTTPS.
+- API calls use `/api` automatically, so no extra `?api=` parameter is needed.
 
 ## Deploy frontend to GitHub Pages (free)
 
