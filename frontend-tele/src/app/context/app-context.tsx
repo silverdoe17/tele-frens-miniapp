@@ -98,9 +98,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       `${window.location.origin.replace(/\/$/, '')}/api`;
 
     const chatId = Number(qs.get('chat_id') || tg?.initDataUnsafe?.chat?.id || 0) || 1;
-    const userNameFromTelegram =
-      tg?.initDataUnsafe?.user?.username ||
-      [tg?.initDataUnsafe?.user?.first_name, tg?.initDataUnsafe?.user?.last_name].filter(Boolean).join(' ');
+    const tgUser = tg?.initDataUnsafe?.user;
+    const telegramDisplayName = tgUser?.username
+      ? `@${tgUser.username}`
+      : [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ');
+    const userNameFromTelegram = telegramDisplayName;
     const currentUserName = String(qs.get('user_name') || userNameFromTelegram || 'You').trim();
 
     return { apiBase, chatId, currentUserName };
@@ -183,6 +185,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     for (const e of eventData) {
       for (const p of e.participants) participantSet.set(p.id, p);
+    }
+    // Always include current Telegram user in participant picker.
+    if (env.currentUserName) {
+      const currentUserParticipant = participantFromName(env.currentUserName);
+      participantSet.set(currentUserParticipant.id, currentUserParticipant);
     }
     setParticipants(Array.from(participantSet.values()));
     setEvents(eventData);

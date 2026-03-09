@@ -9,6 +9,11 @@ import { EditExpensePage } from './pages/edit-expense';
 import { CalendarPage } from './pages/calendar';
 import { SettlementsPage } from './pages/settlements';
 
+const basePath =
+  import.meta.env.BASE_URL && import.meta.env.BASE_URL !== '/'
+    ? import.meta.env.BASE_URL.replace(/\/$/, '')
+    : undefined;
+
 export const router = createBrowserRouter([
   {
     path: '/',
@@ -24,4 +29,6 @@ export const router = createBrowserRouter([
       { path: 'settlements', Component: SettlementsPage },
     ],
   },
-]);
+], {
+  basename: basePath,
+});
