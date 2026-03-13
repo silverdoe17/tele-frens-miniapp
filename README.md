@@ -82,6 +82,30 @@ python launcher.py
 
 Use `/start` or `/app` in Telegram to open Mini App.
 
+### Group-safe flow
+
+Use the app from a group like this:
+
+1. Add the bot to the Telegram group.
+2. In the group, send `/app@YourBotUsername`.
+3. The bot replies with a private-chat deep link for that specific group.
+4. Open the link in DM and tap the web app button.
+5. The Mini App opens scoped to that group only.
+
+Security model:
+
+- Frontend sends Telegram `initData` on every API call.
+- Backend validates the `initData` signature using `BOT_TOKEN`.
+- Backend resolves the active `group_chat_id` and checks the current user is a member of that group.
+- Hangouts, expenses, settlements, and participant lists are filtered to that group only.
+- Group participants default from the bot's known roster for that group.
+
+Roster note:
+
+- Telegram bots cannot fetch a full member list for normal groups on demand.
+- This app keeps a per-group roster from people who interact in the group and from chat member updates the bot receives.
+- That roster is used as the default participant list when creating a hangout.
+
 ## HTTPS for Telegram testing (no domain needed)
 
 Telegram Mini Apps require a public `https://` URL. Fastest local test is a tunnel:

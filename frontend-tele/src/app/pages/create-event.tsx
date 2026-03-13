@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ArrowLeft, X, Plus } from 'lucide-react';
 import { useApp } from '../context/app-context';
@@ -22,6 +22,12 @@ export function CreateEventPage() {
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
   const [newParticipantName, setNewParticipantName] = useState('');
   const [showAddParticipant, setShowAddParticipant] = useState(false);
+
+  useEffect(() => {
+    if (!selectedParticipants.length && participants.length) {
+      setSelectedParticipants(participants.map((participant) => participant.id));
+    }
+  }, [participants]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

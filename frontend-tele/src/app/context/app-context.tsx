@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Event, Expense, Settlement, Participant } from '../types';
+import { Event, Expense, Participant, Settlement } from '../types';
 
 interface AppContextType {
   events: Event[];
@@ -17,7 +17,16 @@ interface AppContextType {
   addParticipant: (participantOrEventId: Participant | string, maybeName?: string) => Promise<void>;
 }
 
-const AppContext = createContext<AppContextType | undefined>(undefined);
+interface SessionResponse {
+  validated: boolean;
+  user: {
+    id: number;
+    username: string | null;
+    display_name: string;
+  };
+  group_chat_id: number | null;
+  groups: Array<{ chat_id: number; title: string; type: string }>;
+}
 
 type HangoutApi = {
   id: number;
@@ -30,7 +39,6 @@ type HangoutApi = {
 
 type ExpenseApi = {
   id: number;
-  hangout_id?: number;
   description: string;
   total_amount: number;
   paid_by: string;
@@ -52,6 +60,8 @@ type DetailApi = {
   settled: boolean;
 };
 
+const AppContext = createContext<AppContextType | undefined>(undefined);
+
 function slugifyName(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, '-');
 }
@@ -65,6 +75,7 @@ function splitEqually(total: number, names: string[]) {
   const validNames = names.filter(Boolean);
   const splits: Record<string, number> = {};
   if (!validNames.length) return splits;
+
   const base = Math.floor((total / validNames.length) * 100) / 100;
   let remainder = Number((total - base * validNames.length).toFixed(2));
   for (const name of validNames) {
@@ -78,11 +89,19 @@ function splitEqually(total: number, names: string[]) {
   return splits;
 }
 
+function withGroup(path: string, groupChatId: number | null) {
+  if (!groupChatId) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}group_chat_id=${groupChatId}`;
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [events, setEvents] = useState<Event[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [activeGroupChatId, setActiveGroupChatId] = useState<number | null>(null);
+  const [currentUserName, setCurrentUserName] = useState('You');
 
   const env = useMemo(() => {
     const tg = (window as any)?.Telegram?.WebApp;
@@ -97,22 +116,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ||
       `${window.location.origin.replace(/\/$/, '')}/api`;
 
-    const chatId = Number(qs.get('chat_id') || tg?.initDataUnsafe?.chat?.id || 0) || 1;
     const tgUser = tg?.initDataUnsafe?.user;
-    const telegramDisplayName = tgUser?.username
+    const defaultName = tgUser?.username
       ? `@${tgUser.username}`
-      : [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ');
-    const userNameFromTelegram = telegramDisplayName;
-    const currentUserName = String(qs.get('user_name') || userNameFromTelegram || 'You').trim();
+      : [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ') || 'You';
 
-    return { apiBase, chatId, currentUserName };
+    return {
+      apiBase,
+      initData: qs.get('init_data') || tg?.initData || '',
+      requestedGroupChatId: Number(qs.get('group_chat_id') || 0) || null,
+      fallbackUserName: String(qs.get('user_name') || defaultName).trim(),
+    };
   }, []);
 
   const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-    const res = await fetch(`${env.apiBase}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
-      ...options,
-    });
+    const headers = new Headers(options.headers || {});
+    headers.set('Content-Type', 'application/json');
+    if (env.initData) {
+      headers.set('X-Telegram-Init-Data', env.initData);
+    }
+
+    const res = await fetch(`${env.apiBase}${path}`, { ...options, headers });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(text || `Request failed (${res.status})`);
@@ -121,15 +145,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const refresh = async () => {
-    const hangouts = await api<{ items: HangoutApi[] }>(`/hangouts?chat_id=${env.chatId}`);
-    const peopleResponse = await api<{ items: string[] }>(`/people?chat_id=${env.chatId}`).catch(
-      () => ({ items: [] })
-    );
+    const mePath = env.requestedGroupChatId ? `/me?group_chat_id=${env.requestedGroupChatId}` : '/me';
+    const session = await api<SessionResponse>(mePath);
+    const scopedGroupId = Number(session.group_chat_id || env.requestedGroupChatId || 0) || null;
+    const scopedUserName = session.user?.display_name || env.fallbackUserName;
 
+    setActiveGroupChatId(scopedGroupId);
+    setCurrentUserName(scopedUserName);
+
+    if (!scopedGroupId) {
+      const currentUser = participantFromName(scopedUserName);
+      setParticipants([currentUser]);
+      setEvents([]);
+      setExpenses([]);
+      setSettlements([]);
+      return;
+    }
+
+    const hangouts = await api<{ items: HangoutApi[] }>(withGroup('/hangouts', scopedGroupId));
+    const peopleResponse = await api<{ items: string[] }>(withGroup('/people', scopedGroupId));
     const details: DetailApi[] = await Promise.all(
-      (hangouts.items || []).map((h) =>
-        api<DetailApi>(`/hangouts/${h.id}/detail?chat_id=${env.chatId}`).catch(() => ({
-          hangout: h,
+      (hangouts.items || []).map((hangout) =>
+        api<DetailApi>(withGroup(`/hangouts/${hangout.id}/detail`, scopedGroupId)).catch(() => ({
+          hangout,
           expenses: [],
           settled_payments: [],
           to_settle: [],
@@ -138,25 +176,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
     );
 
-    const eventData: Event[] = (hangouts.items || []).map((h) => ({
-      id: String(h.id),
-      name: h.name,
-      date: h.date,
-      location: h.location || '',
-      participants: (h.participants || []).map(participantFromName),
+    const eventData: Event[] = (hangouts.items || []).map((hangout) => ({
+      id: String(hangout.id),
+      name: hangout.name,
+      date: hangout.date,
+      location: hangout.location || '',
+      participants: (hangout.participants || []).map(participantFromName),
     }));
 
     const expenseData: Expense[] = [];
     for (const detail of details) {
-      for (const exp of detail.expenses || []) {
+      for (const expense of detail.expenses || []) {
         expenseData.push({
-          id: String(exp.id),
+          id: String(expense.id),
           eventId: String(detail.hangout.id),
-          description: exp.description,
-          amount: Number(exp.total_amount || 0),
-          paidBy: participantFromName(exp.paid_by).id,
-          splitBetween: Object.keys(exp.splits || {}).map((name) => participantFromName(name).id),
-          date: exp.created_at || detail.hangout.date,
+          description: expense.description,
+          amount: Number(expense.total_amount || 0),
+          paidBy: participantFromName(expense.paid_by).id,
+          splitBetween: Object.keys(expense.splits || {}).map((name) => participantFromName(name).id),
+          date: expense.created_at || detail.hangout.date,
           settled: !!detail.settled,
         });
       }
@@ -164,34 +202,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const settlementData: Settlement[] = [];
     for (const detail of details) {
-      for (const s of detail.settled_payments || []) {
+      for (const settlement of detail.settled_payments || []) {
         settlementData.push({
-          id: String(s.id),
+          id: String(settlement.id),
           eventId: String(detail.hangout.id),
-          from: participantFromName(s.from_person).id,
-          to: participantFromName(s.to_person).id,
-          amount: Number(s.amount || 0),
+          from: participantFromName(settlement.from_person).id,
+          to: participantFromName(settlement.to_person).id,
+          amount: Number(settlement.amount || 0),
           expenseIds: [],
-          settledDate: s.created_at,
+          settledDate: settlement.created_at,
           settled: true,
         });
       }
     }
 
-    const participantSet = new Map<string, Participant>();
-    for (const person of peopleResponse.items || []) {
-      const p = participantFromName(person);
-      participantSet.set(p.id, p);
+    const participantMap = new Map<string, Participant>();
+    for (const name of peopleResponse.items || []) {
+      const participant = participantFromName(name);
+      participantMap.set(participant.id, participant);
     }
-    for (const e of eventData) {
-      for (const p of e.participants) participantSet.set(p.id, p);
+    for (const event of eventData) {
+      for (const participant of event.participants) {
+        participantMap.set(participant.id, participant);
+      }
     }
-    // Always include current Telegram user in participant picker.
-    if (env.currentUserName) {
-      const currentUserParticipant = participantFromName(env.currentUserName);
-      participantSet.set(currentUserParticipant.id, currentUserParticipant);
-    }
-    setParticipants(Array.from(participantSet.values()));
+
+    const currentUser = participantFromName(scopedUserName);
+    participantMap.set(currentUser.id, currentUser);
+
+    setParticipants(Array.from(participantMap.values()));
     setEvents(eventData);
     setExpenses(expenseData);
     setSettlements(settlementData);
@@ -204,54 +243,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const resolveNameById = (id: string, eventId?: string) => {
-    const event = events.find((e) => e.id === eventId);
-    const inEvent = event?.participants.find((p) => p.id === id)?.name;
+    const event = events.find((item) => item.id === eventId);
+    const inEvent = event?.participants.find((participant) => participant.id === id)?.name;
     if (inEvent) return inEvent;
-    const global = participants.find((p) => p.id === id)?.name;
+    const global = participants.find((participant) => participant.id === id)?.name;
     if (global) return global;
     return id;
   };
 
   const addEvent = async (event: Event) => {
-    await api('/hangouts', {
+    await api(withGroup('/hangouts', activeGroupChatId), {
       method: 'POST',
       body: JSON.stringify({
-        chat_id: env.chatId,
+        group_chat_id: activeGroupChatId,
         name: event.name,
         date: event.date,
         location: event.location || '',
-        participants: event.participants.map((p) => p.name),
+        participants: event.participants.map((participant) => participant.name),
       }),
     });
     await refresh();
   };
 
   const updateEvent = async (id: string, event: Partial<Event>) => {
-    const current = events.find((e) => e.id === id);
+    const current = events.find((item) => item.id === id);
     if (!current) return;
-    await api(`/hangouts/${id}?chat_id=${env.chatId}`, {
+
+    await api(withGroup(`/hangouts/${id}`, activeGroupChatId), {
       method: 'PATCH',
       body: JSON.stringify({
+        group_chat_id: activeGroupChatId,
         name: event.name ?? current.name,
         date: event.date ?? current.date,
         location: event.location ?? current.location ?? '',
-        participants: (event.participants ?? current.participants).map((p) => p.name),
+        participants: (event.participants ?? current.participants).map((participant) => participant.name),
       }),
     });
     await refresh();
   };
 
   const deleteEvent = async (id: string) => {
-    await api(`/hangouts/${id}?chat_id=${env.chatId}`, { method: 'DELETE' });
+    await api(withGroup(`/hangouts/${id}`, activeGroupChatId), { method: 'DELETE' });
     await refresh();
   };
 
   const addExpense = async (expense: Expense) => {
     const payerName = resolveNameById(expense.paidBy, expense.eventId);
-    const splitNames = expense.splitBetween.map((pid) => resolveNameById(pid, expense.eventId));
-    await api(`/hangouts/${expense.eventId}/expenses?chat_id=${env.chatId}`, {
+    const splitNames = expense.splitBetween.map((participantId) => resolveNameById(participantId, expense.eventId));
+    await api(withGroup(`/hangouts/${expense.eventId}/expenses`, activeGroupChatId), {
       method: 'POST',
       body: JSON.stringify({
+        group_chat_id: activeGroupChatId,
         description: expense.description,
         total_amount: Number(expense.amount || 0),
         paid_by: payerName,
@@ -262,15 +304,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateExpense = async (id: string, expense: Partial<Expense>) => {
-    const current = expenses.find((e) => e.id === id);
+    const current = expenses.find((item) => item.id === id);
     if (!current) return;
+
     const merged = { ...current, ...expense };
     const payerName = resolveNameById(merged.paidBy, merged.eventId);
-    const splitNames = merged.splitBetween.map((pid) => resolveNameById(pid, merged.eventId));
+    const splitNames = merged.splitBetween.map((participantId) => resolveNameById(participantId, merged.eventId));
 
-    await api(`/expenses/${id}?chat_id=${env.chatId}`, {
+    await api(withGroup(`/expenses/${id}`, activeGroupChatId), {
       method: 'PUT',
       body: JSON.stringify({
+        group_chat_id: activeGroupChatId,
         description: merged.description,
         total_amount: Number(merged.amount || 0),
         paid_by: payerName,
@@ -281,14 +325,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteExpense = async (id: string) => {
-    await api(`/expenses/${id}?chat_id=${env.chatId}`, { method: 'DELETE' });
+    await api(withGroup(`/expenses/${id}`, activeGroupChatId), { method: 'DELETE' });
     await refresh();
   };
 
   const addSettlement = async (settlement: Settlement) => {
     const fromName =
       settlement.from === 'current-user'
-        ? env.currentUserName
+        ? currentUserName
         : resolveNameById(settlement.from, settlement.eventId);
     const toName =
       settlement.to === 'expense-payers' ? '' : resolveNameById(settlement.to, settlement.eventId);
@@ -296,9 +340,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!settlement.eventId) return;
 
     if (toName && Number(settlement.amount || 0) > 0) {
-      await api(`/hangouts/${settlement.eventId}/settlements?chat_id=${env.chatId}`, {
+      await api(withGroup(`/hangouts/${settlement.eventId}/settlements`, activeGroupChatId), {
         method: 'POST',
         body: JSON.stringify({
+          group_chat_id: activeGroupChatId,
           from_person: fromName,
           to_person: toName,
           amount: Number(settlement.amount),
@@ -308,19 +353,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const detail = await api<DetailApi>(`/hangouts/${settlement.eventId}/detail?chat_id=${env.chatId}`);
+    const detail = await api<DetailApi>(withGroup(`/hangouts/${settlement.eventId}/detail`, activeGroupChatId));
     const mine = (detail.to_settle || []).filter(
-      (tx) => tx.from.toLowerCase() === env.currentUserName.toLowerCase()
+      (transaction) => transaction.from.toLowerCase() === currentUserName.toLowerCase()
     );
     const targets = mine.length ? mine : detail.to_settle.slice(0, 1);
 
-    for (const tx of targets) {
-      await api(`/hangouts/${settlement.eventId}/settlements?chat_id=${env.chatId}`, {
+    for (const transaction of targets) {
+      await api(withGroup(`/hangouts/${settlement.eventId}/settlements`, activeGroupChatId), {
         method: 'POST',
         body: JSON.stringify({
-          from_person: tx.from,
-          to_person: tx.to,
-          amount: Number(tx.amount),
+          group_chat_id: activeGroupChatId,
+          from_person: transaction.from,
+          to_person: transaction.to,
+          amount: Number(transaction.amount),
         }),
       });
     }
@@ -335,9 +381,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (typeof participantOrEventId !== 'string') {
       const name = participantOrEventId.name?.trim();
       if (!name) return;
-      await api('/people', {
+
+      await api(withGroup('/people', activeGroupChatId), {
         method: 'POST',
-        body: JSON.stringify({ chat_id: env.chatId, name }),
+        body: JSON.stringify({ group_chat_id: activeGroupChatId, name }),
       });
       await refresh();
       return;
@@ -346,19 +393,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const eventId = participantOrEventId;
     const name = String(maybeName || '').trim();
     if (!name) return;
-    await api('/people', {
+
+    await api(withGroup('/people', activeGroupChatId), {
       method: 'POST',
-      body: JSON.stringify({ chat_id: env.chatId, name }),
+      body: JSON.stringify({ group_chat_id: activeGroupChatId, name }),
     });
-    const current = events.find((e) => e.id === eventId);
+
+    const current = events.find((event) => event.id === eventId);
     if (!current) {
       await refresh();
       return;
     }
-    const names = Array.from(new Set([...current.participants.map((p) => p.name), name]));
-    await api(`/hangouts/${eventId}?chat_id=${env.chatId}`, {
+
+    const names = Array.from(new Set([...current.participants.map((participant) => participant.name), name]));
+    await api(withGroup(`/hangouts/${eventId}`, activeGroupChatId), {
       method: 'PATCH',
       body: JSON.stringify({
+        group_chat_id: activeGroupChatId,
         name: current.name,
         date: current.date,
         location: current.location || '',
