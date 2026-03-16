@@ -10,6 +10,7 @@ dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const INIT_DATA_MAX_AGE_SECONDS = Number(process.env.INIT_DATA_MAX_AGE_SECONDS || 86400);
+const FORCED_GROUP_CHAT_ID = Number(process.env.FORCE_GROUP_CHAT_ID || 0) || null;
 
 const app = express();
 app.use(cors());
@@ -218,6 +219,16 @@ function listAccessibleGroups(userId) {
        ORDER BY gc.title COLLATE NOCASE ASC`
     )
     .all(Number(userId));
+}
+
+function listKnownBotGroups() {
+  return db
+    .prepare(
+      `SELECT chat_id, title, type
+       FROM group_chats
+       ORDER BY title COLLATE NOCASE ASC`
+    )
+    .all();
 }
 
 function listGroupRoster(chatId) {
@@ -442,9 +453,11 @@ async function requireTelegramContext(req, res, next) {
     const requestedGroupChatId =
       parseGroupChatId(req.query.group_chat_id) ||
       parseGroupChatId(req.body?.group_chat_id) ||
-      parseGroupChatIdFromStartParam(params.get("start_param"));
+      parseGroupChatIdFromStartParam(params.get("start_param")) ||
+      FORCED_GROUP_CHAT_ID;
 
     let groups = listAccessibleGroups(user.id);
+    let selectableGroups = listKnownBotGroups();
     let groupChatId = requestedGroupChatId || groups[0]?.chat_id || null;
 
     if (groupChatId) {
@@ -452,6 +465,7 @@ async function requireTelegramContext(req, res, next) {
       if (!knownGroup) {
         await ensureGroupMembership(groupChatId, user);
         groups = listAccessibleGroups(user.id);
+        selectableGroups = listKnownBotGroups();
       } else {
         upsertGroupMember(groupChatId, user, 1);
       }
@@ -464,6 +478,7 @@ async function requireTelegramContext(req, res, next) {
       userDisplayName: displayNameFromTelegramUser(user),
       groupChatId,
       groups,
+      selectableGroups,
     };
     next();
   } catch (error) {
@@ -487,6 +502,8 @@ app.get("/api/me", (req, res) => {
     },
     group_chat_id: req.auth.groupChatId,
     groups: req.auth.groups,
+    selectable_groups: req.auth.selectableGroups,
+    forced_group_chat_id: FORCED_GROUP_CHAT_ID,
   });
 });
 

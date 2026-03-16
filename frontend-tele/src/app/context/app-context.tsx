@@ -6,6 +6,10 @@ interface AppContextType {
   expenses: Expense[];
   settlements: Settlement[];
   participants: Participant[];
+  currentGroup: { chatId: number; title: string } | null;
+  availableGroups: Array<{ chatId: number; title: string }>;
+  currentUserName: string;
+  selectGroup: (chatId: number) => Promise<void>;
   addEvent: (event: Event) => Promise<void>;
   updateEvent: (id: string, event: Partial<Event>) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
@@ -26,6 +30,8 @@ interface SessionResponse {
   };
   group_chat_id: number | null;
   groups: Array<{ chat_id: number; title: string; type: string }>;
+  selectable_groups: Array<{ chat_id: number; title: string; type: string }>;
+  forced_group_chat_id: number | null;
 }
 
 type HangoutApi = {
@@ -71,6 +77,13 @@ function participantFromName(name: string): Participant {
   return { id: slugifyName(trimmed) || trimmed, name: trimmed };
 }
 
+function mergeParticipants(existing: Participant[], incoming: Participant) {
+  if (!incoming.name) return existing;
+  const next = new Map(existing.map((participant) => [participant.id, participant]));
+  next.set(incoming.id, incoming);
+  return Array.from(next.values());
+}
+
 function splitEqually(total: number, names: string[]) {
   const validNames = names.filter(Boolean);
   const splits: Record<string, number> = {};
@@ -102,6 +115,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [activeGroupChatId, setActiveGroupChatId] = useState<number | null>(null);
   const [currentUserName, setCurrentUserName] = useState('You');
+  const [currentGroup, setCurrentGroup] = useState<{ chatId: number; title: string } | null>(null);
+  const [availableGroups, setAvailableGroups] = useState<Array<{ chatId: number; title: string }>>([]);
 
   const env = useMemo(() => {
     const tg = (window as any)?.Telegram?.WebApp;
@@ -124,7 +139,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return {
       apiBase,
       initData: qs.get('init_data') || tg?.initData || '',
-      requestedGroupChatId: Number(qs.get('group_chat_id') || 0) || null,
+      requestedGroupChatId:
+        Number(qs.get('group_chat_id') || 0) ||
+        Number(import.meta.env.VITE_DEFAULT_GROUP_CHAT_ID || 0) ||
+        null,
       fallbackUserName: String(qs.get('user_name') || defaultName).trim(),
     };
   }, []);
@@ -144,14 +162,48 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return res.json();
   };
 
-  const refresh = async () => {
-    const mePath = env.requestedGroupChatId ? `/me?group_chat_id=${env.requestedGroupChatId}` : '/me';
+  const refresh = async (requestedGroupChatId?: number | null) => {
+    const effectiveRequestedGroupId =
+      requestedGroupChatId ?? activeGroupChatId ?? env.requestedGroupChatId;
+    const mePath = effectiveRequestedGroupId ? `/me?group_chat_id=${effectiveRequestedGroupId}` : '/me';
     const session = await api<SessionResponse>(mePath);
-    const scopedGroupId = Number(session.group_chat_id || env.requestedGroupChatId || 0) || null;
+    const scopedGroupId = Number(session.group_chat_id || effectiveRequestedGroupId || 0) || null;
     const scopedUserName = session.user?.display_name || env.fallbackUserName;
+    const selectableGroups = session.selectable_groups?.length ? session.selectable_groups : session.groups;
+    const forcedGroupChatId = Number(session.forced_group_chat_id || 0) || null;
+    const normalizedGroups = [...(selectableGroups || [])];
+    if (
+      forcedGroupChatId &&
+      !normalizedGroups.some((group) => Number(group.chat_id) === forcedGroupChatId)
+    ) {
+      normalizedGroups.unshift({
+        chat_id: forcedGroupChatId,
+        title: `Group ${forcedGroupChatId}`,
+        type: 'group',
+      });
+    }
+    const scopedGroup =
+      normalizedGroups.find((group) => Number(group.chat_id) === scopedGroupId) ||
+      session.groups.find((group) => Number(group.chat_id) === scopedGroupId) ||
+      null;
+
+    setAvailableGroups(
+      normalizedGroups.map((group) => ({
+        chatId: Number(group.chat_id),
+        title: group.title || `Group ${group.chat_id}`,
+      }))
+    );
 
     setActiveGroupChatId(scopedGroupId);
     setCurrentUserName(scopedUserName);
+    setCurrentGroup(
+      scopedGroupId
+        ? {
+            chatId: scopedGroupId,
+            title: scopedGroup?.title || `Group ${scopedGroupId}`,
+          }
+        : null
+    );
 
     if (!scopedGroupId) {
       const currentUser = participantFromName(scopedUserName);
@@ -230,7 +282,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const currentUser = participantFromName(scopedUserName);
     participantMap.set(currentUser.id, currentUser);
 
-    setParticipants(Array.from(participantMap.values()));
+    const orderedParticipants = Array.from(participantMap.values()).sort((a, b) => {
+      if (a.id === currentUser.id) return -1;
+      if (b.id === currentUser.id) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    setParticipants(orderedParticipants);
     setEvents(eventData);
     setExpenses(expenseData);
     setSettlements(settlementData);
@@ -241,6 +299,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.error(error);
     });
   }, []);
+
+  const selectGroup = async (chatId: number) => {
+    await refresh(chatId);
+  };
 
   const resolveNameById = (id: string, eventId?: string) => {
     const event = events.find((item) => item.id === eventId);
@@ -382,6 +444,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const name = participantOrEventId.name?.trim();
       if (!name) return;
 
+      if (!activeGroupChatId) {
+        setParticipants((prev) => mergeParticipants(prev, participantFromName(name)));
+        return;
+      }
+
       await api(withGroup('/people', activeGroupChatId), {
         method: 'POST',
         body: JSON.stringify({ group_chat_id: activeGroupChatId, name }),
@@ -393,6 +460,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const eventId = participantOrEventId;
     const name = String(maybeName || '').trim();
     if (!name) return;
+
+    if (!activeGroupChatId) {
+      setParticipants((prev) => mergeParticipants(prev, participantFromName(name)));
+      return;
+    }
 
     await api(withGroup('/people', activeGroupChatId), {
       method: 'POST',
@@ -426,6 +498,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         expenses,
         settlements,
         participants,
+        currentGroup,
+        availableGroups,
+        currentUserName,
+        selectGroup,
         addEvent,
         updateEvent,
         deleteEvent,

@@ -100,6 +100,20 @@ Security model:
 - Hangouts, expenses, settlements, and participant lists are filtered to that group only.
 - Group participants default from the bot's known roster for that group.
 
+Group id note:
+
+- Telegram group and supergroup ids are stored as signed integers.
+- Supergroups usually look like `-1001234567890`.
+- This app stores and passes that value as `group_chat_id`.
+
+Forced group selection:
+
+- If you want to pin the app to one Telegram group for now, set `FORCE_GROUP_CHAT_ID` in `finance-miniapp/.env`.
+- Example:
+  - `FORCE_GROUP_CHAT_ID=-1001234567890`
+- After changing it, restart the backend.
+- The frontend group picker will still let the user select from the bot's known groups, but the forced id becomes the default active group.
+
 Roster note:
 
 - Telegram bots cannot fetch a full member list for normal groups on demand.

@@ -1,36 +1,78 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ArrowLeft, X, Plus } from 'lucide-react';
 import { useApp } from '../context/app-context';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '../components/ui/dialog';
 
 export function CreateEventPage() {
   const navigate = useNavigate();
-  const { addEvent, addParticipant, participants } = useApp();
+  const {
+    addEvent,
+    addParticipant,
+    participants,
+    currentGroup,
+    currentUserName,
+    availableGroups,
+    selectGroup,
+  } = useApp();
 
   const [name, setName] = useState('');
-  const [date, setDate] = useState('');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [location, setLocation] = useState('');
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
   const [newParticipantName, setNewParticipantName] = useState('');
-  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [isAddingParticipantInline, setIsAddingParticipantInline] = useState(false);
+  const [manualGroupId, setManualGroupId] = useState('');
+  const [hasInitializedParticipants, setHasInitializedParticipants] = useState(false);
+
+  const currentUserParticipant = useMemo(() => {
+    const name = currentUserName.trim();
+    if (!name) return null;
+    return {
+      id: name.toLowerCase().replace(/\s+/g, '-'),
+      name,
+    };
+  }, [currentUserName]);
+
+  const visibleParticipants = useMemo(() => {
+    if (!currentUserParticipant) return participants;
+    return participants.some((participant) => participant.id === currentUserParticipant.id)
+      ? participants
+      : [currentUserParticipant, ...participants];
+  }, [participants, currentUserParticipant]);
+
+  const participantSuggestions = useMemo(() => {
+    const query = newParticipantName.trim().toLowerCase();
+    if (!query) {
+      return visibleParticipants.slice(0, 6);
+    }
+
+    return visibleParticipants
+      .filter((participant) => participant.name.toLowerCase().includes(query))
+      .slice(0, 6);
+  }, [newParticipantName, visibleParticipants]);
 
   useEffect(() => {
-    if (!selectedParticipants.length && participants.length) {
-      setSelectedParticipants(participants.map((participant) => participant.id));
+    setSelectedParticipants([]);
+    setHasInitializedParticipants(false);
+  }, [currentGroup?.chatId]);
+
+  useEffect(() => {
+    if (!hasInitializedParticipants && visibleParticipants.length) {
+      setSelectedParticipants(visibleParticipants.map((participant) => participant.id));
+      setHasInitializedParticipants(true);
     }
-  }, [participants]);
+  }, [visibleParticipants, hasInitializedParticipants]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!currentGroup) {
+      alert('Link this hangout to a Telegram group first');
+      return;
+    }
 
     if (!name || !date) {
       alert('Please fill in all required fields');
@@ -47,7 +89,7 @@ export function CreateEventPage() {
       name,
       date,
       location,
-      participants: participants.filter((p) =>
+      participants: visibleParticipants.filter((p) =>
         selectedParticipants.includes(p.id)
       ),
     };
@@ -57,29 +99,52 @@ export function CreateEventPage() {
   };
 
   const toggleParticipant = (id: string) => {
-    if (selectedParticipants.includes(id)) {
-      setSelectedParticipants(selectedParticipants.filter((p) => p !== id));
-    } else {
-      setSelectedParticipants([...selectedParticipants, id]);
-    }
+    setSelectedParticipants((prev) =>
+      prev.includes(id) ? prev.filter((participantId) => participantId !== id) : [...prev, id]
+    );
   };
 
   const handleAddNewParticipant = async () => {
     if (newParticipantName.trim()) {
-      const name = newParticipantName.trim();
+      const participantName = newParticipantName.trim();
       const newParticipant = {
-        id: name.toLowerCase().replace(/\s+/g, '-'),
-        name,
+        id: participantName.toLowerCase().replace(/\s+/g, '-'),
+        name: participantName,
       };
-      await addParticipant(newParticipant);
-      setSelectedParticipants([...selectedParticipants, newParticipant.id]);
-      setNewParticipantName('');
-      setShowAddParticipant(false);
+      try {
+        await addParticipant(newParticipant);
+        setSelectedParticipants((prev) => (prev.includes(newParticipant.id) ? prev : [...prev, newParticipant.id]));
+        setNewParticipantName('');
+        setIsAddingParticipantInline(false);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Unable to add participant');
+      }
+    }
+  };
+
+  const handlePickSuggestedParticipant = (participantId: string) => {
+    setSelectedParticipants((prev) => (prev.includes(participantId) ? prev : [...prev, participantId]));
+    setNewParticipantName('');
+    setIsAddingParticipantInline(false);
+  };
+
+  const handleManualGroupLink = async () => {
+    const parsed = Number(manualGroupId);
+    if (!Number.isFinite(parsed)) {
+      alert('Enter a valid Telegram group chat id');
+      return;
+    }
+
+    try {
+      await selectGroup(parsed);
+      setManualGroupId('');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to link Telegram group');
     }
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="h-full">
       <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center gap-3">
         <button
           onClick={() => navigate('/')}
@@ -91,6 +156,63 @@ export function CreateEventPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="p-4 space-y-6">
+        <div className="bg-card rounded-2xl p-4 border border-border">
+          <p className="text-sm text-muted-foreground mb-1">Linked Group</p>
+          <div className="space-y-3">
+            {currentGroup ? (
+              <>
+                <p>{currentGroup.title}</p>
+                <p className="text-xs text-muted-foreground">Chat ID: {currentGroup.chatId}</p>
+              </>
+            ) : (
+              <p className="text-sm">No group linked yet. Choose a group or paste a chat id.</p>
+            )}
+
+            {availableGroups.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {availableGroups.map((group) => {
+                  const isActive = currentGroup?.chatId === group.chatId;
+                  return (
+                    <Button
+                      key={group.chatId}
+                      type="button"
+                      variant={isActive ? 'default' : 'outline'}
+                      className={isActive ? 'bg-primary' : ''}
+                      onClick={() => {
+                        void selectGroup(group.chatId);
+                      }}
+                    >
+                      {group.title}
+                    </Button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No known groups loaded yet from the bot. You can still link one manually now.
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <Input
+                value={manualGroupId}
+                onChange={(e) => setManualGroupId(e.target.value)}
+                placeholder="-1001234567890"
+                className="bg-input-background"
+              />
+              <Button
+                type="button"
+                onClick={() => {
+                  void handleManualGroupLink();
+                }}
+                className="bg-primary"
+              >
+                Link
+              </Button>
+            </div>
+          </div>
+        </div>
+
         {/* Event Name */}
         <div className="space-y-2">
           <Label htmlFor="name">
@@ -126,8 +248,16 @@ export function CreateEventPage() {
           <Label>
             Participants <span className="text-destructive">*</span>
           </Label>
+          <p className="text-xs text-muted-foreground">
+            Telegram group members are shown with `@username` when the bot knows their Telegram account. Add `@username` or a name inline to store it in this group's roster.
+          </p>
+          {!currentGroup && (
+            <p className="text-xs text-destructive">
+              Link a Telegram group above to sync the shared roster. You can still add names inline on this page first.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
-            {participants.map((participant) => {
+            {visibleParticipants.map((participant) => {
               const isSelected = selectedParticipants.includes(participant.id);
               return (
                 <button
@@ -150,20 +280,64 @@ export function CreateEventPage() {
                     {participant.name[0]}
                   </div>
                   <span>{participant.name}</span>
-                  {isSelected && <X className="w-4 h-4" />}
-                </button>
+                    {isSelected && <X className="w-4 h-4" />}
+                  </button>
               );
             })}
             <button
               type="button"
-              onClick={() => setShowAddParticipant(true)}
+              onClick={() => setIsAddingParticipantInline((prev) => !prev)}
               className="flex items-center gap-2 px-4 py-2 rounded-full border-2 border-dashed border-primary hover:bg-primary/10 transition-all"
             >
               <div className="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-primary to-secondary text-white">
                 <Plus className="w-5 h-5" />
               </div>
+              <span>Add participant</span>
             </button>
           </div>
+          {isAddingParticipantInline && (
+            <div className="space-y-2 pt-2">
+              <div className="flex gap-2">
+                <Input
+                  value={newParticipantName}
+                  onChange={(e) => setNewParticipantName(e.target.value)}
+                  placeholder="Add @username or name"
+                  className="bg-input-background"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleAddNewParticipant();
+                    }
+                    if (e.key === 'Escape') {
+                      setIsAddingParticipantInline(false);
+                      setNewParticipantName('');
+                    }
+                  }}
+                />
+                <Button type="button" onClick={handleAddNewParticipant} className="bg-primary">
+                  Add
+                </Button>
+              </div>
+              {participantSuggestions.length > 0 && (
+                <div className="rounded-2xl border border-border bg-card p-2">
+                  <p className="px-2 pb-2 text-xs text-muted-foreground">Suggestions</p>
+                  <div className="flex flex-wrap gap-2">
+                    {participantSuggestions.map((participant) => (
+                      <button
+                        key={participant.id}
+                        type="button"
+                        onClick={() => handlePickSuggestedParticipant(participant.id)}
+                        className="rounded-full border border-border px-3 py-1.5 text-sm hover:border-primary hover:bg-primary/10 transition-colors"
+                      >
+                        {participant.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Location */}
@@ -193,38 +367,6 @@ export function CreateEventPage() {
         </div>
       </form>
 
-      {/* Add Participant Dialog */}
-      <Dialog open={showAddParticipant} onOpenChange={setShowAddParticipant}>
-        <DialogContent className="bg-card">
-          <DialogHeader>
-            <DialogTitle>Add New Participant</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 mt-4">
-            <Input
-              value={newParticipantName}
-              onChange={(e) => setNewParticipantName(e.target.value)}
-              placeholder="Enter participant name"
-              className="bg-input-background"
-              autoFocus
-            />
-            <div className="flex gap-2">
-              <Button onClick={handleAddNewParticipant} className="flex-1 bg-primary">
-                Add
-              </Button>
-              <Button
-                onClick={() => {
-                  setShowAddParticipant(false);
-                  setNewParticipantName('');
-                }}
-                variant="outline"
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

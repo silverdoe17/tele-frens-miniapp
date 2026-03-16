@@ -5,23 +5,16 @@ import { useApp } from '../context/app-context';
 import { format } from 'date-fns';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '../components/ui/dialog';
 
 export function EventDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { events, updateEvent, participants, addParticipant } = useApp();
+  const { events, updateEvent, participants, addParticipant, currentGroup } = useApp();
   const event = events.find((e) => e.id === id);
 
   const [editingField, setEditingField] = useState<'name' | 'date' | 'location' | 'participants' | null>(null);
   const [tempValue, setTempValue] = useState('');
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
-  const [showAddParticipant, setShowAddParticipant] = useState(false);
   const [newParticipantName, setNewParticipantName] = useState('');
 
   if (!event) {
@@ -67,7 +60,6 @@ export function EventDetailsPage() {
       setSelectedParticipants((prev) => (prev.includes(addedId) ? prev : [...prev, addedId]));
       await addParticipant(event.id, addedName);
       setNewParticipantName('');
-      setShowAddParticipant(false);
     }
   };
 
@@ -92,6 +84,14 @@ export function EventDetailsPage() {
       </div>
 
       <div className="p-4 space-y-6">
+        <div className="bg-card rounded-2xl p-4 border border-border">
+          <p className="text-sm text-muted-foreground mb-1">Linked Group</p>
+          <p>{currentGroup?.title || (currentGroup?.chatId ? `Group ${currentGroup.chatId}` : 'No group linked')}</p>
+          {currentGroup?.chatId && (
+            <p className="text-xs text-muted-foreground mt-1">Chat ID: {currentGroup.chatId}</p>
+          )}
+        </div>
+
         <div className="bg-card rounded-2xl p-4 border border-border">
           {editingField === 'name' ? (
             <div className="space-y-3">
@@ -183,6 +183,9 @@ export function EventDetailsPage() {
                 <Edit2 className="w-4 h-4" />
                 <span>Edit Participants</span>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Add `@username` or a name inline to this group's reusable roster.
+              </p>
               <div className="flex flex-wrap gap-2">
                 {participants.map((participant) => {
                   const isSelected = selectedParticipants.includes(participant.id);
@@ -207,15 +210,24 @@ export function EventDetailsPage() {
                     </button>
                   );
                 })}
-                <button
-                  type="button"
-                  onClick={() => setShowAddParticipant(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-full border-2 border-dashed border-primary hover:bg-primary/10 transition-all"
-                >
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-primary to-secondary text-white">
-                    <Plus className="w-5 h-5" />
-                  </div>
-                </button>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={newParticipantName}
+                  onChange={(e) => setNewParticipantName(e.target.value)}
+                  placeholder="Add @username or name"
+                  className="bg-input-background"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleAddParticipant();
+                    }
+                  }}
+                />
+                <Button type="button" onClick={() => void handleAddParticipant()} className="bg-primary">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add
+                </Button>
               </div>
               <div className="flex gap-2">
                 <Button onClick={handleSaveEdit} className="flex-1 bg-primary">Save</Button>
@@ -243,36 +255,6 @@ export function EventDetailsPage() {
             </div>
           )}
         </div>
-
-        <Dialog open={showAddParticipant} onOpenChange={setShowAddParticipant}>
-          <DialogContent className="bg-card">
-            <DialogHeader>
-              <DialogTitle>Add New Participant</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 mt-4">
-              <Input
-                value={newParticipantName}
-                onChange={(e) => setNewParticipantName(e.target.value)}
-                placeholder="Enter participant name"
-                className="bg-input-background"
-                autoFocus
-              />
-              <div className="flex gap-2">
-                <Button onClick={handleAddParticipant} className="flex-1 bg-primary">Add</Button>
-                <Button
-                  onClick={() => {
-                    setShowAddParticipant(false);
-                    setNewParticipantName('');
-                  }}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
 
         <Link to={`/events/${event.id}/expenses`}>
           <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-4 text-white flex items-center justify-between hover:shadow-lg transition-shadow">
